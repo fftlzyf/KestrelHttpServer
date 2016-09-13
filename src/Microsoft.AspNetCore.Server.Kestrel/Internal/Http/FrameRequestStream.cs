@@ -119,8 +119,19 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Internal.Http
             var task = ValidateState(cancellationToken);
             if (task == null)
             {
-                // Needs .AsTask to match Stream's Async method return types
-                return _body.ReadAsync(new ArraySegment<byte>(buffer, offset, count), cancellationToken).AsTask();
+                return _body.ReadAsync(new ArraySegment<byte>(buffer, offset, count), cancellationToken);
+            }
+            return task;
+        }
+
+        public override Task CopyToAsync(Stream destination, int bufferSize, CancellationToken cancellationToken)
+        {
+            // REVIEW: Is bufferSize a minimum, maximum or suggestion? Should we validate that it's <= 4096 or >= 4096?
+
+            var task = ValidateState(cancellationToken);
+            if (task == null)
+            {
+                return _body.CopyToAsync(destination, cancellationToken);
             }
             return task;
         }

@@ -2,6 +2,7 @@
 // Licensed under the Apache License, Version 2.0. See License.txt in the project root for license information.
 
 using System;
+using System.IO;
 using System.Text;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Server.Kestrel.Internal.Http;
@@ -73,18 +74,16 @@ namespace Microsoft.AspNetCore.Server.KestrelTests
                 // block to the memory pool.
                 input.Add("Hello", true);
 
-                var readBuffer = new byte[8192];
+                var ms = new MemoryStream();
 
-                var count1 = await stream.ReadAsync(readBuffer, 0, 8192);
-                Assert.Equal(8192, count1);
-                AssertASCII(largeInput, new ArraySegment<byte>(readBuffer, 0, 8192));
+                await stream.CopyToAsync(ms);
+                var requestArray = ms.ToArray();
+                Assert.Equal(8197, requestArray.Length);
+                AssertASCII(largeInput + "Hello", new ArraySegment<byte>(requestArray, 0, requestArray.Length));
 
-                var count2 = await stream.ReadAsync(readBuffer, 0, 8192);
-                Assert.Equal(5, count2);
-                AssertASCII("Hello", new ArraySegment<byte>(readBuffer, 0, 5));
-
-                var count3 = await stream.ReadAsync(readBuffer, 0, 8192);
-                Assert.Equal(0, count3);
+                var readBuffer = new byte[1];
+                var count = await stream.ReadAsync(readBuffer, 0, 1);
+                Assert.Equal(0, count);
             }
         }
 
