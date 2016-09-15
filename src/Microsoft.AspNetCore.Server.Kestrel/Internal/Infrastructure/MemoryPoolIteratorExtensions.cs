@@ -254,7 +254,7 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Internal.Infrastructure
                 block = block.Next;
             }
 
-            // The following should be unreachable due to the IsEnd check above
+            // The following should be unreachable due to the IsEnd check above.
             throw new InvalidOperationException("This should be unreachable!");
         }
 
