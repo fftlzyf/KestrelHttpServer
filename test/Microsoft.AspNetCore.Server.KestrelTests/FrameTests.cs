@@ -29,6 +29,7 @@ namespace Microsoft.AspNetCore.Server.KestrelTests
             {
                 var connectionContext = new ConnectionContext()
                 {
+                    ConnectionControl = new Mock<IConnectionControl>().Object,
                     DateHeaderValueManager = new DateHeaderValueManager(),
                     ServerAddress = ServerAddress.FromUrl("http://localhost:5000"),
                     ServerOptions = new KestrelServerOptions(),
@@ -72,6 +73,7 @@ namespace Microsoft.AspNetCore.Server.KestrelTests
             {
                 var connectionContext = new ConnectionContext()
                 {
+                    ConnectionControl = new Mock<IConnectionControl>().Object,
                     DateHeaderValueManager = new DateHeaderValueManager(),
                     ServerAddress = ServerAddress.FromUrl("http://localhost:5000"),
                     ServerOptions = new KestrelServerOptions(),
@@ -114,6 +116,7 @@ namespace Microsoft.AspNetCore.Server.KestrelTests
             {
                 var connectionContext = new ConnectionContext()
                 {
+                    ConnectionControl = new Mock<IConnectionControl>().Object,
                     DateHeaderValueManager = new DateHeaderValueManager(),
                     ServerAddress = ServerAddress.FromUrl("http://localhost:5000"),
                     ServerOptions = new KestrelServerOptions(),
@@ -155,6 +158,7 @@ namespace Microsoft.AspNetCore.Server.KestrelTests
             {
                 var connectionContext = new ConnectionContext()
                 {
+                    ConnectionControl = new Mock<IConnectionControl>().Object,
                     DateHeaderValueManager = new DateHeaderValueManager(),
                     ServerAddress = ServerAddress.FromUrl("http://localhost:5000"),
                     ServerOptions = new KestrelServerOptions(),
@@ -484,6 +488,7 @@ namespace Microsoft.AspNetCore.Server.KestrelTests
             {
                 var connectionContext = new ConnectionContext()
                 {
+                    ConnectionControl = new Mock<IConnectionControl>().Object,
                     DateHeaderValueManager = new DateHeaderValueManager(),
                     ServerAddress = ServerAddress.FromUrl("http://localhost:5000"),
                     ServerOptions = new KestrelServerOptions(),
@@ -543,6 +548,7 @@ namespace Microsoft.AspNetCore.Server.KestrelTests
 
                 var connectionContext = new ConnectionContext()
                 {
+                    ConnectionControl = new Mock<IConnectionControl>().Object,
                     DateHeaderValueManager = new DateHeaderValueManager(),
                     ServerAddress = ServerAddress.FromUrl("http://localhost:5000"),
                     ServerOptions = options
@@ -790,7 +796,7 @@ namespace Microsoft.AspNetCore.Server.KestrelTests
         }
 
         [Fact]
-        public void TakeStartLineDisablesKeepAliveTimeoutOnFirstByteAvailable()
+        public void TakeStartLineStartsRequestHeadersTimeoutOnFirstByteAvailable()
         {
             var trace = new KestrelTrace(new TestKestrelTrace());
             var ltp = new LoggingThreadPool(trace);
@@ -813,12 +819,13 @@ namespace Microsoft.AspNetCore.Server.KestrelTests
                 socketInput.IncomingData(requestLineBytes, 0, requestLineBytes.Length);
 
                 frame.TakeStartLine(socketInput);
-                connectionControl.Verify(cc => cc.CancelTimeout());
+                var expectedRequestHeadersTimeout = (long)connectionContext.ServerOptions.Limits.RequestHeadersTimeout.TotalMilliseconds;
+                connectionControl.Verify(cc => cc.ResetTimeout(expectedRequestHeadersTimeout));
             }
         }
 
         [Fact]
-        public void TakeStartLineDoesNotDisableKeepAliveTimeoutIfNoDataAvailable()
+        public void TakeStartLineDoesNotStartRequestHeadersTimeoutIfNoDataAvailable()
         {
             var trace = new KestrelTrace(new TestKestrelTrace());
             var ltp = new LoggingThreadPool(trace);
@@ -838,7 +845,7 @@ namespace Microsoft.AspNetCore.Server.KestrelTests
                 frame.Reset();
 
                 frame.TakeStartLine(socketInput);
-                connectionControl.Verify(cc => cc.CancelTimeout(), Times.Never);
+                connectionControl.Verify(cc => cc.ResetTimeout(It.IsAny<long>()), Times.Never);
             }
         }
 
@@ -852,6 +859,7 @@ namespace Microsoft.AspNetCore.Server.KestrelTests
             {
                 var connectionContext = new ConnectionContext()
                 {
+                    ConnectionControl = new Mock<IConnectionControl>().Object,
                     DateHeaderValueManager = new DateHeaderValueManager(),
                     ServerAddress = ServerAddress.FromUrl("http://localhost:5000"),
                     ServerOptions = new KestrelServerOptions(),
@@ -942,7 +950,8 @@ namespace Microsoft.AspNetCore.Server.KestrelTests
                 frame.Reset();
 
                 var requestProcessingTask = frame.RequestProcessingAsync();
-                connectionControl.Verify(cc => cc.SetTimeout((long)connectionContext.ServerOptions.Limits.KeepAliveTimeout.TotalMilliseconds));
+                var expectedKeepAliveTimeout = (long)connectionContext.ServerOptions.Limits.KeepAliveTimeout.TotalMilliseconds;
+                connectionControl.Verify(cc => cc.SetTimeout(expectedKeepAliveTimeout));
 
                 frame.Stop();
                 socketInput.IncomingFin();
