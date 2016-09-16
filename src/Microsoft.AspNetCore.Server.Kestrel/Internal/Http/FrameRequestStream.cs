@@ -126,7 +126,14 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Internal.Http
 
         public override Task CopyToAsync(Stream destination, int bufferSize, CancellationToken cancellationToken)
         {
-            // REVIEW: Is bufferSize a minimum, maximum or suggestion? Should we validate that it's <= 4096 or >= 4096?
+            if (destination == null)
+            {
+                throw new ArgumentNullException(nameof(destination));
+            }
+            if (bufferSize <= 0)
+            {
+                throw new ArgumentException("bufferSize must be positive.", nameof(bufferSize));
+            }
 
             var task = ValidateState(cancellationToken);
             if (task == null)

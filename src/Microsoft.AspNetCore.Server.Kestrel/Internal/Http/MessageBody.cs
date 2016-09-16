@@ -208,14 +208,20 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Internal.Http
             }
         }
 
-        protected virtual void ConsumedBytes(int count)
+        private void ConsumedBytes(int count)
         {
             var scan = _context.SocketInput.ConsumingStart();
             scan.Skip(count);
             _context.SocketInput.ConsumingComplete(scan, scan);
+
+            OnConsumedBytes(count);
         }
 
         protected abstract ValueTask<ArraySegment<byte>> PeekAsync(CancellationToken cancellationToken);
+
+        protected virtual void OnConsumedBytes(int count)
+        {
+        }
 
         public static MessageBody For(
             HttpVersion httpVersion,
@@ -341,11 +347,9 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Internal.Http
                 }
             }
 
-            protected override void ConsumedBytes(int count)
+            protected override void OnConsumedBytes(int count)
             {
                 _inputLength -= count;
-
-                base.ConsumedBytes(count);
             }
         }
 
@@ -377,11 +381,9 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Internal.Http
                 return new ValueTask<ArraySegment<byte>>(PeekStateMachineAsync());
             }
 
-            protected override void ConsumedBytes(int count)
+            protected override void OnConsumedBytes(int count)
             {
                 _inputLength -= count;
-
-                base.ConsumedBytes(count);
             }
 
             private async Task<ArraySegment<byte>> PeekStateMachineAsync()

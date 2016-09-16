@@ -2,12 +2,18 @@
 // Licensed under the Apache License, Version 2.0. See License.txt in the project root for license information.
 
 using System;
+using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Server.Kestrel.Internal.Http;
+using Microsoft.AspNetCore.Server.KestrelTests.TestHelpers;
+using Microsoft.Extensions.Internal;
+using Moq;
 using Xunit;
+using Xunit.Sdk;
 
 namespace Microsoft.AspNetCore.Server.KestrelTests
 {
@@ -88,26 +94,82 @@ namespace Microsoft.AspNetCore.Server.KestrelTests
             }
         }
 
-        public static TheoryData<Stream> WriteStreamData => new TheoryData<Stream>
+        public static IEnumerable<object[]> StreamData => new[]
         {
-            new ThrowOnWriteSynchronousStream(),
-            new ThrowOnWriteAsynchronousStream()
-
-        public static TheoryData<Stream, FrameRequestHeaders, string[]> StreamData => new TheoryData<Stream, FrameRequestHeaders, string[]>
-        {
-            // Remaining Data
-            { new ThrowOnWriteSynchronousStream(), new FrameRequestHeaders { HeaderConnection = "close" }, new[] { "Hello ", "World!" } },
-            { new ThrowOnWriteAsynchronousStream(), new FrameRequestHeaders { HeaderConnection = "close" }, new[] { "Hello ", "World!" } },
-            // Content-Length
-            { new ThrowOnWriteSynchronousStream(), new FrameRequestHeaders { HeaderContentLength = "12" }, new[] { "Hello ", "World!" } },
-            { new ThrowOnWriteAsynchronousStream(), new FrameRequestHeaders { HeaderContentLength = "12" }, new[] { "Hello ", "World!" } },
-            // Chunked 
-            { new ThrowOnWriteSynchronousStream(), new FrameRequestHeaders { HeaderTransferEncoding = "chunked" }, new[] { "6\r\nHello \r\n", "6\r\nWorld!\r\n0\r\n\r\n" } },
-            { new ThrowOnWriteAsynchronousStream(), new FrameRequestHeaders { HeaderTransferEncoding = "chunked" }, new[] { "6\r\nHello \r\n", "6\r\nWorld!\r\n0\r\n\r\n" } },
+            new object[] { new ThrowOnWriteSynchronousStream() },
+            new object[] { new ThrowOnWriteAsynchronousStream() },
         };
 
+        public static IEnumerable<object[]> RequestData => new[]
+        {
+            // Remaining Data
+            new object[] { new FrameRequestHeaders { HeaderConnection = "close" }, new[] { "Hello ", "World!" } },
+            // Content-Length
+            new object[] { new FrameRequestHeaders { HeaderContentLength = "12" }, new[] { "Hello ", "World!" } },
+            // Chunked
+            new object[] { new FrameRequestHeaders { HeaderTransferEncoding = "chunked" }, new[] { "6\r\nHello \r\n", "6\r\nWorld!\r\n0\r\n\r\n" } },
+        };
+
+        public static IEnumerable<object[]> CombinedData => 
+            from stream in StreamData
+            from request in RequestData
+            select new[] { stream[0], request[0], request[1] };
+
         [Theory]
-        [MemberData(nameof(StreamData))]
+        [MemberData(nameof(RequestData))]
+        public async Task CopyToAsyncDoesntCopyBlocks(FrameRequestHeaders headers, string[] data)
+        {
+            var writeCount = 0;
+            var writeTcs = new TaskCompletionSource<byte[]>();
+            var mockDestination = new Mock<Stream>();
+
+            mockDestination
+                .Setup(m => m.WriteAsync(It.IsAny<byte[]>(), It.IsAny<int>(), It.IsAny<int>(), CancellationToken.None))
+                .Callback((byte[] buffer, int offset, int count, CancellationToken cancellationToken) =>
+                {
+                    writeTcs.SetResult(buffer);
+                    writeCount++;
+                })
+                .Returns(TaskCache.CompletedTask);
+
+            using (var input = new TestInput())
+            {
+                var body = MessageBody.For(HttpVersion.Http11, headers, input.FrameContext);
+
+                var copyToAsyncTask = body.CopyToAsync(mockDestination.Object);
+
+                // The block returned by IncomingStart always has at leas 2048 available bytes,
+                // so no need to bounds check in this test.
+                var socketInput = input.FrameContext.SocketInput;
+                var bytes = Encoding.ASCII.GetBytes(data[0]);
+                var block = socketInput.IncomingStart();
+                Buffer.BlockCopy(bytes, 0, block.Array, block.End, bytes.Length);
+                socketInput.IncomingComplete(bytes.Length, null);
+
+                // Verify the block passed to WriteAsync is the same one incoming data was written into.
+                Assert.Same(block.Array, await writeTcs.Task);
+
+                writeTcs = new TaskCompletionSource<byte[]>();
+                bytes = Encoding.ASCII.GetBytes(data[1]);
+                block = socketInput.IncomingStart();
+                Buffer.BlockCopy(bytes, 0, block.Array, block.End, bytes.Length);
+                socketInput.IncomingComplete(bytes.Length, null);
+
+                Assert.Same(block.Array, await writeTcs.Task);
+
+                if (headers.HeaderConnection == "close")
+                {
+                    socketInput.IncomingFin();
+                }
+
+                await copyToAsyncTask;
+
+                Assert.Equal(2, writeCount);
+            }
+        }
+
+        [Theory]
+        [MemberData(nameof(CombinedData))]
         public async Task CopyToAsyncAdvancesRequestStreamWhenDestinationWriteAsyncThrows(Stream writeStream, FrameRequestHeaders headers, string[] data)
         {
             using (var input = new TestInput())
@@ -116,7 +178,7 @@ namespace Microsoft.AspNetCore.Server.KestrelTests
 
                 input.Add(data[0]);
 
-                await Assert.ThrowsAsync<NotImplementedException>(() => body.CopyToAsync(writeStream));
+                await Assert.ThrowsAsync<XunitException>(() => body.CopyToAsync(writeStream));
 
                 input.Add(data[1], fin: headers.HeaderConnection == "close");
 
@@ -169,6 +231,11 @@ namespace Microsoft.AspNetCore.Server.KestrelTests
                 throw new NotImplementedException();
             }
 
+            public override Task WriteAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken)
+            {
+                throw new XunitException();
+            }
+
             public override bool CanRead { get; }
             public override bool CanSeek { get; }
             public override bool CanWrite => true;
@@ -200,15 +267,13 @@ namespace Microsoft.AspNetCore.Server.KestrelTests
 
             public override void Write(byte[] buffer, int offset, int count)
             {
-                // The test looks for a NotImplementedException.
-                // Ensure that WriteAsync is being called by not throwing that type.
-                throw new Exception();
+                throw new NotImplementedException();
             }
 
             public override async Task WriteAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken)
             {
                 await Task.Delay(1);
-                throw new NotImplementedException();
+                throw new XunitException();
             }
 
             public override bool CanRead { get; }
